@@ -1,6 +1,6 @@
 from pprint import pprint
-
-from .models import User
+from bot import db
+from .models import User, Article
 import os
 import requests
 from dotenv import load_dotenv
@@ -18,12 +18,25 @@ class GNews:
                           f'&lang={self.user.settings.language_code}'
 
     def get_headlines(self):
+        old_articles = Article.query.filter_by(user_chat_id=self.user.chat_id).all()
+        for article in old_articles:
+            db.session.delete(article)
+        db.session.commit()
         res = requests.get(url=self.g_news_url)
         data = res.json()
         pprint(data)
         articles = data.get('articles')
-        total_articles = data.get('totalArticles')
+        news = []
+        for art in articles:
+            new = Article(
+                user_chat_id=self.user.chat_id,
+                title=art.get('title'),
+                description=art.get('description'),
+                image_url= art.get('image'),
+                article_url=art.get('url')
+            )
+            news.append(new)
+        db.session.bulk_save_objects(news)
+        db.session.commit()
 
-        for article in articles:
-            print(article.get('content'))
-        return data.get('articles')[0].get('description')
+

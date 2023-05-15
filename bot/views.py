@@ -13,10 +13,8 @@ def main():
         handler = MessageHandler(message)
     elif callback := request.json.get('callback_query'):
         handler = CallbackHandler(callback)
+    else:
+        print('Right handler doesn\'t exist!')
+        return 'ok', 200
     handler.handle()
     return 'ok', 200
-
-
-@app.get('/h')
-def hui():
-    return '<h1>ТИ ХУЙ</h1>'

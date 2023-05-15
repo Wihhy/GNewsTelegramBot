@@ -2,15 +2,15 @@ import json
 import os
 import requests
 from dotenv import load_dotenv
+from flask_paginate import Pagination
 from bot import db
 from .settings import *
-from .models import User, Settings
+from .models import User, Settings, Article
 from .services import GNews
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-GNEWS_URL = f'https://gnews.io/api/v4/top-headlines?apikey={os.getenv("GNEWS_API_KEY")}27&category=general&lang=uk'
 
 
 class FromUser:
@@ -54,6 +54,14 @@ class TelegramHandler:
         }
         requests.post(f'{TG_BASE_URL}{BOT_TOKEN}/sendMessage', json=data)
 
+    def send_photo_and_inline_markup(self, photo_url: str, markup):
+        data = {
+            'chat_id': self.from_user.id,
+            'photo': photo_url,
+            'reply_markup': {'inline_keyboard': markup}
+        }
+        requests.post(f'{TG_BASE_URL}{BOT_TOKEN}/sendPhoto', json=data)
+
 
 class MessageHandler(TelegramHandler):
 
@@ -95,41 +103,97 @@ class CallbackHandler(TelegramHandler):
 
     def __init__(self, data):
         self.from_user = FromUser(**data.get('from'))
-        self.callback_data = data.get('data')
+        self.callback_data = json.loads(data.get('data'))
 
     def handle(self):
-        match self.callback_data.split():
-            case 'choose_country', code:
-                self.send_inline_markup_message(
-                    markup=COUNTRY_CHOOSE_INLINE_MARKUP,
-                    text='Оберіть із переліку доступних країн:')
-            case 'set_country_code', country, code:
+        match self.callback_data:
+            # SETTINGS
+            case {'route': 'settings'}:
+                match self.callback_data:
+                    case {'act': 'choose_country'}:
+                        self.send_inline_markup_message(
+                            markup=COUNTRY_CHOOSE_INLINE_MARKUP,
+                            text='Оберіть із переліку доступних країн:')
 
-                user_settings = User.query.get(self.from_user.id)
-                user_settings.settings.country = code
-                db.session.commit()
-                self.send_message(text=f'Успішно! Країну пошуку змінено! Тепер це: {country.capitalize()}!')
+                    case {'act': 'choose_language'}:
+                        self.send_inline_markup_message(
+                            markup=LANGUAGE_CHOOSE_INLINE_MARKUP,
+                            text='Оберіть із переліку доступних мов:')
 
-            case 'choose_language', code:
-                self.send_inline_markup_message(
-                    markup=LANGUAGE_CHOOSE_INLINE_MARKUP,
-                    text='Оберіть із переліку доступних мов:')
+                    case {'act': 'setcountry'}:
+                        country_code = self.callback_data.get('country_code')
+                        country_name = COUNTRY_DICT.get(country_code)
+                        user_settings = User.query.get(self.from_user.id)
+                        user_settings.settings.country = country_code
+                        db.session.commit()
+                        self.send_message(text=f'Успішно! Країну пошуку змінено! Тепер це: {country_name}!')
 
-            case 'set_language_code', language, code:
+                    case {'act': 'setlang'}:
+                        language_code = self.callback_data.get('language_code')
+                        language_name = LANGUAGE_DICT.get(language_code)
+                        user_settings = User.query.get(self.from_user.id)
+                        user_settings.settings.language_code = language_code
+                        db.session.commit()
+                        self.send_message(text=f'Успішно! Мову пошуку змінено! Тепер це {language_name}!')
 
-                user_settings = User.query.get(self.from_user.id)
-                user_settings.settings.language_code = code
-                db.session.commit()
-                self.send_message(text=f'Успішно! Мову пошуку змінено! Тепер це {language.capitalize()}!')
-
-            case 'news', 'headlines':
+            # NEWS
+            case {'route': 'choose_category'}:
+                print(type(self.callback_data))
                 self.send_inline_markup_message(
                     markup=CATEGORY_CHOOSE_INLINE_MARKUP,
                     text='Оберіть одну із категорій:'
                 )
 
-            case 'headlines_category', category:
-                gnews = GNews(user_chat_id=self.from_user.id, category=category)
-                self.send_message(str(gnews.get_headlines()))
+            case {'route': 'headlines'}:
+                if 'category' in self.callback_data:
+                    category = self.callback_data.get('category')
+                    gnews = GNews(user_chat_id=self.from_user.id, category=category)
+                    gnews.get_headlines()
 
+                news_list = Article.query.filter(Article.user_chat_id == int(self.from_user.id)).all()
+                per_page = 1
 
+                if news_list:
+                    if 'page' in self.callback_data:
+                        page = int(self.callback_data['page'])
+                    else:
+                        page = 1
+
+                    news_on_page = news_list[(page - 1) * per_page: page * per_page]
+                    news_buttons = []
+                    for art in news_on_page:
+                        news_buttons.append([{
+                            'text': 'Детальніше',
+                            'callback_data': json.dumps({'article_id': str(art.id)})
+                        }])
+                        photo_url = art.image_url
+                        self.send_message(text=art.title)
+
+                    pagination = Pagination(page=page, total=len(news_list), per_page=per_page,
+                                            record_name='articles')
+                    markup = news_buttons
+                    if pagination.has_next:
+                        markup.append([{
+                            'text': 'Наступна',
+                            'callback_data': json.dumps({'route': 'headlines', 'page': page + 1})
+                        }])
+                    if page > 1:
+                        markup.append([{
+                            'text': 'На першу',
+                            'callback_data': json.dumps({'route': 'headlines'})
+                        }])
+                    self.send_photo_and_inline_markup(photo_url=photo_url, markup=markup)
+
+            case {'article_id': article_id}:
+                article = Article.query.filter(Article.id == article_id).first()
+                description = article.description
+                markup = [[{'text': 'Стаття повністю',
+                            'url': article.article_url}]]
+                self.send_inline_markup_message(text=description, markup=markup)
+
+            # SEARCH
+            case 'news', 'search':
+                self.send_inline_markup_message(
+                    markup=CATEGORY_CHOOSE_INLINE_MARKUP,
+                    text='Напишіть текст для пошуку:'
+                )
