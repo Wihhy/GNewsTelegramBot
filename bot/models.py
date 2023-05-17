@@ -14,6 +14,7 @@ class User(db.Model):
     is_bot = db.Column(db.Boolean)
     last_name = db.Column(db.String)
     username = db.Column(db.String)
+    is_searching = db.Column(db.Boolean, default=False)
 
 
 class Article(db.Model):

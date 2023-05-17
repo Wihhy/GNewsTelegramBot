@@ -68,6 +68,7 @@ class MessageHandler(TelegramHandler):
     def __init__(self, user_data):
         self.message_text = user_data.get('text')
         self.from_user = FromUser(**user_data.get('from'))
+        self.user_in_db = User.query.get(self.from_user.id)
 
     def handle(self):
         match self.message_text.lower():
@@ -97,6 +98,23 @@ class MessageHandler(TelegramHandler):
                     markup=HEADLINES_SEARCH_INLINE_MARKUP,
                     text='Пошук новин чи топові заголовки?'
                 )
+        if self.user_in_db.is_searching is True:
+            self.user_in_db.is_searching = False
+            db.session.commit()
+            gnews = GNews(user_chat_id=self.from_user.id, q=self.message_text)
+            gnews.get_news()
+            first_art = Article.query.filter(Article.user_chat_id == int(self.from_user.id)).first()
+            markup = [[{
+                'text': 'Детальніше',
+                'callback_data': json.dumps({'article_id': str(first_art.id)})
+            }],
+                [{
+                    'text': 'Наступна',
+                    'callback_data': json.dumps({'route': 'headlines', 'page': 2})
+                }]]
+
+            self.send_message(text=first_art.title)
+            self.send_photo_and_inline_markup(photo_url=first_art.image_url, markup=markup)
 
 
 class CallbackHandler(TelegramHandler):
@@ -148,10 +166,9 @@ class CallbackHandler(TelegramHandler):
                 if 'category' in self.callback_data:
                     category = self.callback_data.get('category')
                     gnews = GNews(user_chat_id=self.from_user.id, category=category)
-                    gnews.get_headlines()
+                    gnews.get_news()
 
                 news_list = Article.query.filter(Article.user_chat_id == int(self.from_user.id)).all()
-                per_page = 1
 
                 if news_list:
                     if 'page' in self.callback_data:
@@ -159,7 +176,7 @@ class CallbackHandler(TelegramHandler):
                     else:
                         page = 1
 
-                    news_on_page = news_list[(page - 1) * per_page: page * per_page]
+                    news_on_page = news_list[page - 1: page]
                     news_buttons = []
                     for art in news_on_page:
                         news_buttons.append([{
@@ -169,7 +186,7 @@ class CallbackHandler(TelegramHandler):
                         photo_url = art.image_url
                         self.send_message(text=art.title)
 
-                    pagination = Pagination(page=page, total=len(news_list), per_page=per_page,
+                    pagination = Pagination(page=page, total=len(news_list), per_page=1,
                                             record_name='articles')
                     markup = news_buttons
                     if pagination.has_next:
@@ -192,8 +209,10 @@ class CallbackHandler(TelegramHandler):
                 self.send_inline_markup_message(text=description, markup=markup)
 
             # SEARCH
-            case 'news', 'search':
-                self.send_inline_markup_message(
-                    markup=CATEGORY_CHOOSE_INLINE_MARKUP,
-                    text='Напишіть текст для пошуку:'
+            case {'route': 'search'}:
+                self.send_message(
+                    text='Введіть текст для пошуку:'
                 )
+                user = User.query.get(self.from_user.id)
+                user.is_searching = True
+                db.session.commit()
