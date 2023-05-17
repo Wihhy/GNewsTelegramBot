@@ -68,7 +68,6 @@ class MessageHandler(TelegramHandler):
     def __init__(self, user_data):
         self.message_text = user_data.get('text')
         self.from_user = FromUser(**user_data.get('from'))
-        self.user_in_db = User.query.get(self.from_user.id)
 
     def handle(self):
         match self.message_text.lower():
