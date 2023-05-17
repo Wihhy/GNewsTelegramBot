@@ -19,8 +19,7 @@ NEWS_SETTINGS_REPLY_MARKUP = [[
 
 HEADLINES_SEARCH_INLINE_MARKUP = [
     [
-        {'text': 'Пошук', 'callback_data': json.dumps({'route': 'news',
-                                                       'act': 'search'})},
+        {'text': 'Пошук', 'callback_data': json.dumps({'route': 'search'})},
         {'text': 'Топові заголовки', 'callback_data': json.dumps({'route': 'choose_category'})}
     ]
 ]
