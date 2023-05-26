@@ -7,6 +7,7 @@ from bot import db
 from .settings import *
 from .models import User, Settings, Article
 from .services import GNews
+from bot import exeptions
 
 load_dotenv()
 
@@ -68,6 +69,7 @@ class MessageHandler(TelegramHandler):
     def __init__(self, user_data):
         self.message_text = user_data.get('text')
         self.from_user = FromUser(**user_data.get('from'))
+        self.user_in_db = User.query.get(self.from_user.id)
 
     def handle(self):
         match self.message_text.lower():
@@ -97,11 +99,28 @@ class MessageHandler(TelegramHandler):
                     markup=HEADLINES_SEARCH_INLINE_MARKUP,
                     text='Пошук новин чи топові заголовки?'
                 )
+
         if self.user_in_db.is_searching is True:
-            self.user_in_db.is_searching = False
-            db.session.commit()
             gnews = GNews(user_chat_id=self.from_user.id, q=self.message_text)
-            gnews.get_news()
+            try:
+                gnews.get_news()
+            except exeptions.NoArticles as exc:
+                self.send_message(text='На жаль не знайдено жодної новини. Ви можете натиснути кнопку "Пошук", '
+                                       'та спробувати ще раз.')
+                print(exc)
+                return 'ok', 200
+            except exeptions.ReachedDailyQuota as exc:
+                self.send_message(text='На жаль Ви досягли денного ліміту запитів. '
+                                       'Ліміт оновлюється кожного дня о 03:00 за Києвським часом.')
+                print(exc)
+                return 'ok', 200
+            except exeptions.ConnectionError as exc:
+                self.send_message(text='На жаль не вдалось зʼєднатись із сервісом для пошуку новин, '
+                                       'можливо на данний момент сервіс не доступний, Ви можете повторити спробу. '
+                                       'Якщо помилка повториться, рекомендуємо Вам спробувати пізніше.')
+                print(exc)
+                return 'ok', 200
+
             first_art = Article.query.filter(Article.user_chat_id == int(self.from_user.id)).first()
             markup = [[{
                 'text': 'Детальніше',
@@ -112,6 +131,8 @@ class MessageHandler(TelegramHandler):
                     'callback_data': json.dumps({'route': 'headlines', 'page': 2})
                 }]]
 
+            self.user_in_db.is_searching = False
+            db.session.commit()
             self.send_message(text=first_art.title)
             self.send_photo_and_inline_markup(photo_url=first_art.image_url, markup=markup)
 
@@ -155,7 +176,6 @@ class CallbackHandler(TelegramHandler):
 
             # NEWS
             case {'route': 'choose_category'}:
-                print(type(self.callback_data))
                 self.send_inline_markup_message(
                     markup=CATEGORY_CHOOSE_INLINE_MARKUP,
                     text='Оберіть одну із категорій:'
@@ -173,10 +193,27 @@ class CallbackHandler(TelegramHandler):
                 if 'category' in self.callback_data:
                     category = self.callback_data.get('category')
                     gnews = GNews(user_chat_id=self.from_user.id, category=category)
-                    gnews.get_news()
+                    try:
+                        gnews.get_news()
+                    except exeptions.NoArticles as exc:
+                        self.send_message(text='На жаль не знайдено жодної новини. Ви можете натиснути кнопку "Пошук", '
+                                               'та спробувати ще раз.')
+                        print(exc)
+                        return 'ok', 200
+                    except exeptions.ReachedDailyQuota as exc:
+                        self.send_message(text='На жаль Ви досягли денного ліміту запитів. '
+                                               'Ліміт оновлюється кожного дня о 03:00 за Києвським часом.')
+                        print(exc)
+                        return 'ok', 200
+                    except exeptions.ConnectionError as exc:
+                        self.send_message(text='На жаль не вдалось зʼєднатись із сервісом для пошуку новин, '
+                                               'можливо на данний момент сервіс не доступний, '
+                                               'Ви можете повторити спробу. '
+                                               'Якщо помилка повториться, рекомендуємо Вам спробувати пізніше.')
+                        print(exc)
+                        return 'ok', 200
 
                 news_list = Article.query.filter(Article.user_chat_id == int(self.from_user.id)).all()
-
                 if news_list:
                     if 'page' in self.callback_data:
                         page = int(self.callback_data['page'])
